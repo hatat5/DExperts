@@ -3,7 +3,7 @@
 *.py[cod]
 .vscode/
 
-config.yml
+*config.yml*
 scripts/sbatch_scripts
 human_eval/sentiment/old_comparisons
 human_eval/sentiment/*batch_results.csv
