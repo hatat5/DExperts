@@ -5,9 +5,9 @@ PROMPTS_DATASET=prompts/nishant_toy_prompt.jsonl
 OUTPUT_DIR=generations/nishant_toy_prompt/dexperts/${EXPERT_SIZE}_experts/
 
 ALPHAS=( 2.0 )
-STEERING_LAYERS=( 21 22 23 24 25 26 27 28 29 )
+#STEERING_LAYERS=( 21 22 23 24 25 26 27 28 29 )
 #ALPHAS=( 0.0 0.5 1.0 1.5 2.0 2.5 3.0 3.5 4.0 5.0 10.0 )
-#STEERING_LAYERS=( 20 )
+STEERING_LAYERS=( 21 )
 for ALPHA in "${ALPHAS[@]}"
 do
     for STEERING_LAYER in "${STEERING_LAYERS[@]}"
