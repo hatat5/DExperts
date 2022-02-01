@@ -209,6 +209,37 @@ def dexperts(prompts: pd.Series,
         **generate_kwargs
     )
 
+def dexperts_steer(
+        prompts: pd.Series,
+        max_len: int,
+        num_samples: int,
+        batch_size: int,
+        steering_layer: int,
+        alpha: float,
+        model_name_or_path: str,
+        expert_name_or_path: str,
+        antiexpert_name_or_path: str,
+        out_file: Path,
+        **generate_kwargs
+) -> Iterable[str]:
+
+    generator = DExpertsGeneration(
+        base_model=model_name_or_path, 
+        expert_model=expert_name_or_path,
+        antiexpert_model=antiexpert_name_or_path,
+        steering_layer=steering_layer,
+        alpha=alpha,
+    )
+
+    yield from _gpt2_helper(
+        prompts=prompts,
+        max_len=max_len,
+        num_samples=num_samples,
+        batch_size=batch_size,
+        generator=generator,
+        out_file=out_file,
+        **generate_kwargs
+    )
 
 def dexperts_gpt3(prompts: pd.Series,
                   max_len: int,

@@ -8,12 +8,12 @@ import torch
 from tqdm import tqdm
 import os
 
-from generation.generation import gpt2, gpt3, pplm, dexperts, dexperts_gpt3
+from generation.generation import gpt2, gpt3, pplm, dexperts, dexperts_gpt3, dexperts_steer
 from utils.constants import PERSPECTIVE_API_ATTRIBUTES_LOWER
 from utils.perspective_api import PerspectiveWorker, unpack_scores
 from utils.utils import load_jsonl, batchify, ensure_dir
 
-ALLOWED_MODELS = ['gpt3', 'gpt2', 'dexperts', 'dexperts-gpt3', 'pplm']
+ALLOWED_MODELS = ['gpt3', 'gpt2', 'dexperts', 'dexperts-gpt3', 'pplm', 'dexperts-steer']
 
 
 def make_generations_col(generations, responses):
@@ -58,9 +58,10 @@ def collate(dataset: Optional[pd.DataFrame], generations: List[str], responses: 
 @click.option('--alpha', default=0.0, help='Hyperparameter for dexperts')
 @click.option('--filter_p', default=0.9, type=float, help='Hyperparameter for truncation of p_base')
 @click.option('--p', default=1.0, type=float, help='Hyperparameter for nucleus sampling')
+@click.option('--steering-layer', default=None, type=int, help='steering layer number')
 def main(output_dir: str, dataset_file: Optional[str], use_eos: bool, model: str, model_type: str, nontoxic_model: str,
          toxic_model: str, perspective_rate_limit: int, n: int, max_tokens: int, batch_size: int, resume: bool,
-         alpha: float, filter_p: float, p: float):
+         alpha: float, filter_p: float, p: float, steering_layer: Optional[int]):
     # Load prompts
     if dataset_file:
         assert not use_eos
@@ -136,6 +137,21 @@ def main(output_dir: str, dataset_file: Optional[str], use_eos: bool, model: str
             filter_p=filter_p,
             p=p,
             alpha=alpha,
+        )
+    elif model_type == 'dexperts-steer':
+        generations_iter = dexperts_steer(
+            prompts=prompts,
+            max_len=max_tokens,
+            num_samples=n,
+            batch_size=batch_size,
+            steering_layer=steering_layer,
+            alpha=alpha,
+            model_name_or_path=model,
+            expert_name_or_path=nontoxic_model,
+            antiexpert_name_or_path=toxic_model,
+            out_file=generations_file,
+            filter_p=filter_p,
+            p=p,
         )
     elif model_type == 'dexperts-gpt3':
         generations_iter = dexperts_gpt3(

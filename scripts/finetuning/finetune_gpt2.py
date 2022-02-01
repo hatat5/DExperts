@@ -75,6 +75,13 @@ class ModelArguments:
     cache_dir: Optional[str] = field(
         default=None, metadata={"help": "Where do you want to store the pretrained models downloaded from s3"}
     )
+    experimental_group: Optional[str] = field(
+        default='control', metadata={"help": "Choose control for baseline and experimental for all experimental configs"}
+    )
+    
+    layers_to_finetune: Optional[str] = field(
+        default='24,25,26,27,28,29,30,31,32,33,34,35', metadata={"help": "Choose layers to keep unfrozen"}
+    )
 
 
 @dataclass
@@ -225,6 +232,13 @@ def main():
         tokenizer=tokenizer, mlm=data_args.mlm, mlm_probability=data_args.mlm_probability
     )
 
+    # Modify model's parameters for our experimental method (freezing certain layers)
+    if model_args.experimental_group == 'experimental':
+        layers_to_finetune = model_args.layers_to_finetune.split(',')
+        for param_name, param in model.base_model.named_parameters():
+            if param_name.split('.')[1] not in layers_to_finetune: 
+                param.requires_grad = False
+
     # Initialize our Trainer
     trainer = Trainer(
         model=model,
@@ -242,6 +256,10 @@ def main():
             if model_args.model_name_or_path is not None and os.path.isdir(model_args.model_name_or_path)
             else None
         )
+
+        #if model_args.experimental_group == 'experimental':
+        #    model_path += f'_layers={model_args.layers_to_finetune}'
+
         trainer.train(model_path=model_path)
         trainer.save_model()
         # For convenience, we also re-save the tokenizer to the same directory,

@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Union, List
+from typing import Union, List, Optional
 
 import torch
 import torch.nn.functional as F
@@ -21,6 +21,8 @@ class DExpertsGeneration(GPT2Generation):
         expert_model: Union[str, Path, GPT2PreTrainedModel] = None,
         tokenizer: str = 'gpt2', 
         seed: int = 42,
+        steering_layer: Optional[int] = None,
+        alpha: Optional[float] = 0,
     ):
         # Set up device
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -42,6 +44,28 @@ class DExpertsGeneration(GPT2Generation):
         self.tokenizer = GPT2Tokenizer.from_pretrained(tokenizer, pad_token=self.STOP_TOKEN)
         assert self.tokenizer.eos_token_id == self.tokenizer.pad_token_id
 
+        # Prepare model if steer
+        if steering_layer is not None:
+            self.base_block = self.base_model.transformer.h[steering_layer]
+            # TODO: Better copying and loading so that memory gets freed properly
+            if self.expert is not None:
+                self.expert_block = self.expert.transformer.h[steering_layer]
+            else:
+                self.expert_block = None
+            if self.antiexpert is not None:
+                self.anti_expert_block = self.antiexpert.transformer.h[steering_layer]
+            else:
+                self.anti_expert_block = None
+
+            self.steer_model = self.base_model
+            self.steer_model.transformer.set_steering_layer(
+                    layer_num=steering_layer,
+                    base_block=self.base_block,
+                    expert_block=self.expert_block,
+                    anti_expert_block=self.anti_expert_block,
+                    alpha=alpha,
+            )
+
     def __repr__(self):
         return f'<DExpertsGenerator model_name_or_path="{self.model}">'
 
@@ -54,6 +78,7 @@ class DExpertsGeneration(GPT2Generation):
                  p: float = 1.0,
                  temperature: float = 1.0,
                  alpha: float = 0.0,
+                 layers_to_modify: Optional[List[int]] = None,
                  **model_kwargs):
         if isinstance(prompt, str):
             prompt = [prompt]
@@ -73,31 +98,61 @@ class DExpertsGeneration(GPT2Generation):
         if self.antiexpert:
             self.antiexpert.eval()
         with torch.no_grad():
+
+            # Sorts layers to modify
+            if layers_to_modify is not None:
+                layers_to_modify.sort()
+
             for step in range(max_len):
-                # base model prediction
-                base_logits, base_past = self.base_model(
-                    input_ids, attention_mask=attention_mask, position_ids=position_ids, **model_kwargs)
-                
-                # expert prediction
-                if self.expert:
-                    expert_logits, expert_past = self.expert(
+                if hasattr(self, 'steer_model'):
+                    ensemble_logits, steer_past = self.steer_model(
                         input_ids, attention_mask=attention_mask, position_ids=position_ids, **model_kwargs)
+                    
+                    if filter_p < 1.0:
+                        ensemble_logits = top_k_top_p_filtering(ensemble_logits, top_p=filter_p)
+
                 else:
-                    expert_logits = base_logits
-                
-                # antiexpert prediction
-                if self.antiexpert:
-                    antiexpert_logits, antiexpert_past = self.antiexpert(
-                        input_ids, attention_mask=attention_mask, position_ids=position_ids, **model_kwargs)
-                else:
-                    antiexpert_logits = base_logits
-                
-                if filter_p < 1.0:
-                    base_logits = top_k_top_p_filtering(base_logits, top_p=filter_p)
-                
-                # DExperts
-                alpha = torch.tensor(alpha).to(self.device)
-                ensemble_logits = base_logits + alpha * (expert_logits - antiexpert_logits)
+                    if layers_to_modify is None:
+                        # base model prediction
+                        base_logits, base_past = self.base_model(
+                            input_ids, attention_mask=attention_mask, position_ids=position_ids, **model_kwargs)
+                    
+                    # expert prediction
+                    # TODO: Update this
+                    if self.expert:
+                        if layers_to_modify is not None:
+                            raise NotImplementedError('TODO')
+                        else:
+                            expert_logits, expert_past = self.expert(
+                                input_ids, attention_mask=attention_mask, position_ids=position_ids, **model_kwargs)
+                    else:
+                        if layers_to_modify is not None:
+                            raise NotImplementedError('TODO')
+                        else:
+                            expert_logits = base_logits
+                    
+                    # antiexpert prediction
+                    if self.antiexpert:
+                        if layers_to_modify is not None:
+                            raise NotImplementedError('TODO')
+                        else:
+                            antiexpert_logits, antiexpert_past = self.antiexpert(
+                                input_ids, attention_mask=attention_mask, position_ids=position_ids, **model_kwargs)
+                    else:
+                        if layers_to_modify is not None:
+                            raise NotImplementedError('TODO')
+                        else:
+                            antiexpert_logits = base_logits
+
+                    if layers_to_modify is not None:
+                        raise NotImplementedError('TODO')
+                    
+                    if filter_p < 1.0:
+                        base_logits = top_k_top_p_filtering(base_logits, top_p=filter_p)
+                    
+                    # DExperts
+                    alpha = torch.tensor(alpha).to(self.device)
+                    ensemble_logits = base_logits + alpha * (expert_logits - antiexpert_logits)
 
                 # in the first decoding step, we want to use the 'real' last position for each sentence
                 if step == 0:
