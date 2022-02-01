@@ -3,6 +3,8 @@
 *.py[cod]
 .vscode/
 
+generations/nishant_toy_prompt/
+runs/
 *config.yml*
 scripts/sbatch_scripts
 human_eval/sentiment/old_comparisons
