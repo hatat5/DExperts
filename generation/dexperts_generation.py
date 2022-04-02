@@ -8,6 +8,7 @@ from generation.gpt2_generation import GPT2Generation
 
 from utils import utils
 from utils.generation_utils import top_k_top_p_filtering
+from copy import deepcopy
 
 MAX_LENGTH = int(10000)  # Hardcoded max length to avoid infinite loop
 
@@ -28,7 +29,7 @@ class DExpertsGeneration(GPT2Generation):
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         n_gpu = torch.cuda.device_count()
         utils.set_seed(seed, n_gpu)
-
+        
         self.base_model = GPT2LMHeadModel.from_pretrained(base_model).to(self.device)
         
         if antiexpert_model:
@@ -92,6 +93,8 @@ class DExpertsGeneration(GPT2Generation):
         position_ids = attention_mask.cumsum(dim=1) - 1
         unfinished_sents = torch.ones(batch_size, dtype=torch.long, device=self.device)
 
+        # Set alpha for steering
+        alpha = torch.tensor(alpha).to(self.device)
         self.base_model.eval()
         if self.expert:
             self.expert.eval()
@@ -105,8 +108,10 @@ class DExpertsGeneration(GPT2Generation):
 
             for step in range(max_len):
                 if hasattr(self, 'steer_model'):
-                    ensemble_logits, steer_past = self.steer_model(
+                    steer_outputs = self.steer_model(
                         input_ids, attention_mask=attention_mask, position_ids=position_ids, **model_kwargs)
+                    ensemble_logits = steer_outputs.logits
+                    steer_past = steer_outputs.past_key_values
                     
                     if filter_p < 1.0:
                         ensemble_logits = top_k_top_p_filtering(ensemble_logits, top_p=filter_p)
@@ -114,8 +119,10 @@ class DExpertsGeneration(GPT2Generation):
                 else:
                     if layers_to_modify is None:
                         # base model prediction
-                        base_logits, base_past = self.base_model(
+                        base_outputs = self.base_model(
                             input_ids, attention_mask=attention_mask, position_ids=position_ids, **model_kwargs)
+                        base_logits = base_outputs.logits
+                        base_past = base_outputs.past_key_values
                     
                     # expert prediction
                     # TODO: Update this
@@ -123,8 +130,10 @@ class DExpertsGeneration(GPT2Generation):
                         if layers_to_modify is not None:
                             raise NotImplementedError('TODO')
                         else:
-                            expert_logits, expert_past = self.expert(
+                            expert_outputs = self.expert(
                                 input_ids, attention_mask=attention_mask, position_ids=position_ids, **model_kwargs)
+                            expert_logits = expert_outputs.logits
+                            expert_past = expert_outputs.past_key_values
                     else:
                         if layers_to_modify is not None:
                             raise NotImplementedError('TODO')
@@ -136,8 +145,10 @@ class DExpertsGeneration(GPT2Generation):
                         if layers_to_modify is not None:
                             raise NotImplementedError('TODO')
                         else:
-                            antiexpert_logits, antiexpert_past = self.antiexpert(
+                            antiexpert_outputs = self.antiexpert(
                                 input_ids, attention_mask=attention_mask, position_ids=position_ids, **model_kwargs)
+                            antiexpert_logits = antiexpert_outputs.logits
+                            antiexpert_past = antiexpert_outputs.past_key_values
                     else:
                         if layers_to_modify is not None:
                             raise NotImplementedError('TODO')
@@ -148,11 +159,13 @@ class DExpertsGeneration(GPT2Generation):
                         raise NotImplementedError('TODO')
                     
                     if filter_p < 1.0:
+                        if self.antiexpert is None: # This is because there's a filtering that happens which induces nans in the expert only setting
+                            antiexpert_logits = deepcopy(antiexpert_logits)
                         base_logits = top_k_top_p_filtering(base_logits, top_p=filter_p)
                     
                     # DExperts
-                    alpha = torch.tensor(alpha).to(self.device)
                     ensemble_logits = base_logits + alpha * (expert_logits - antiexpert_logits)
+                    #torch.nan_to_num(ensemble_logits, -float('inf')) # necessary when doing expert only modeling
 
                 # in the first decoding step, we want to use the 'real' last position for each sentence
                 if step == 0:

@@ -1,0 +1,5 @@
+#bash scripts/our_scripts/sentiment/mar_1_sentiment_steer_positive2negative.sh
+#bash scripts/our_scripts/sentiment/mar_1_sentiment_steer_neutral2negative.sh
+bash scripts/our_scripts/sentiment/mar_1_sentiment_baselines_positive2negative.sh
+bash scripts/our_scripts/sentiment/mar_1_sentiment_baselines_neutral2negative.sh
+

@@ -7,6 +7,7 @@ import pandas as pd
 import torch
 from tqdm import tqdm
 import os
+import time
 
 from generation.generation import gpt2, gpt3, pplm, dexperts, dexperts_gpt3, dexperts_steer
 from utils.constants import PERSPECTIVE_API_ATTRIBUTES_LOWER
@@ -187,6 +188,7 @@ def main(output_dir: str, dataset_file: Optional[str], use_eos: bool, model: str
     for i, gen in enumerate(generations_iter):
         generations.append(gen)
         perspective(f'generation-{i}', gen)
+        #time.sleep(1)
 
     torch.cuda.empty_cache()
     perspective.stop()

@@ -116,12 +116,14 @@ class PerspectiveAPI:
         # Generate API client object dynamically based on service name and version
         return discovery.build('commentanalyzer', 'v1alpha1', developerKey=api_key)
 
+    # Added languages='en' because a lot of the errors are language id errors
     @staticmethod
     def _make_request(text: str, service):
         analyze_request = {
             'comment': {'text': text},
             'requestedAttributes': {attr: {} for attr in PERSPECTIVE_API_ATTRIBUTES},
             'spanAnnotations': True,
+            'languages': ["en"], 
         }
         return service.comments().analyze(body=analyze_request)
 

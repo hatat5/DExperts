@@ -40,8 +40,10 @@ from transformers import (
     Trainer,
     TrainingArguments,
     set_seed,
+    EarlyStoppingCallback,
+    TrainerCallback,
+    IntervalStrategy,
 )
-
 
 logger = logging.getLogger(__name__)
 
@@ -75,12 +77,28 @@ class ModelArguments:
     cache_dir: Optional[str] = field(
         default=None, metadata={"help": "Where do you want to store the pretrained models downloaded from s3"}
     )
+
     experimental_group: Optional[str] = field(
         default='control', metadata={"help": "Choose control for baseline and experimental for all experimental configs"}
     )
     
     layers_to_finetune: Optional[str] = field(
         default='24,25,26,27,28,29,30,31,32,33,34,35', metadata={"help": "Choose layers to keep unfrozen"}
+    )
+
+    finetune_embedding: bool = field(
+        default=False,
+        metadata={"help": "whether to finetune the embedding matrices wte and wpe."}
+    )
+    
+    finetune_lm_head: bool = field(
+        default=False,
+        metadata={"help": "whether to finetune the output lm head. Note many of the earlier runs do finetune this"}
+    )
+    
+    early_stopping: bool = field(
+        default=False,
+        metadata={"help": "whether to do early stopping. If yes, this defaults to a patience of 4."}
     )
 
 
@@ -146,6 +164,13 @@ def main():
             "or remove the --do_eval argument."
         )
 
+    training_args.evaluate_during_training = True
+    training_args.prediction_loss_only = True
+    
+    if training_args.do_eval:
+        training_args.evaluation_strategy = IntervalStrategy("epoch")
+        training_args.load_best_model_at_end = True
+
     if (
         os.path.exists(training_args.output_dir)
         and os.listdir(training_args.output_dir)
@@ -190,9 +215,9 @@ def main():
         logger.warning("You are instantiating a new config instance from scratch.")
 
     if model_args.tokenizer_name:
-        tokenizer = AutoTokenizer.from_pretrained(model_args.tokenizer_name, cache_dir=model_args.cache_dir)
+        tokenizer = AutoTokenizer.from_pretrained(model_args.tokenizer_name, cache_dir=model_args.cache_dir, use_fast=False)
     elif model_args.model_name_or_path:
-        tokenizer = AutoTokenizer.from_pretrained(model_args.model_name_or_path, cache_dir=model_args.cache_dir)
+        tokenizer = AutoTokenizer.from_pretrained(model_args.model_name_or_path, cache_dir=model_args.cache_dir, use_fast=False)
     else:
         raise ValueError(
             "You are instantiating a new tokenizer from scratch. This is not supported, but you can do it from another script, save it,"
@@ -219,10 +244,16 @@ def main():
         )
 
     if data_args.block_size <= 0:
-        data_args.block_size = tokenizer.max_len
+        try:
+            data_args.block_size = tokenizer.max_len
+        except:
+            data_args.block_size = tokenizer.model_max_length
         # Our input block size will be the max possible for the model
     else:
-        data_args.block_size = min(data_args.block_size, tokenizer.max_len)
+        try:
+            data_args.block_size = min(data_args.block_size, tokenizer.max_len)
+        except:
+            data_args.block_size = min(data_args.block_size, tokenizer.model_max_length)
 
     # Get datasets
 
@@ -236,9 +267,19 @@ def main():
     if model_args.experimental_group == 'experimental':
         layers_to_finetune = model_args.layers_to_finetune.split(',')
         for param_name, param in model.base_model.named_parameters():
-            if param_name.split('.')[1] not in layers_to_finetune: 
+            if param_name.split('.')[1] not in layers_to_finetune:
                 param.requires_grad = False
+        if model_args.finetune_embedding:
+            model.base_model.wte.weight.requires_grad = True
+            model.base_model.wpe.weight.requires_grad = True
+        model.lm_head.weight.requires_grad = model_args.finetune_lm_head
 
+    if model_args.early_stopping:
+        training_args.load_best_model_at_end = True
+        training_args.save_strategy = IntervalStrategy('epoch')
+        training_args.metric_for_best_model = 'loss'
+        training_args.greater_is_better = False
+    
     # Initialize our Trainer
     trainer = Trainer(
         model=model,
@@ -246,9 +287,11 @@ def main():
         data_collator=data_collator,
         train_dataset=train_dataset,
         eval_dataset=eval_dataset,
-        prediction_loss_only=True,
     )
 
+    if model_args.early_stopping:
+        trainer.add_callback(EarlyStoppingCallback(early_stopping_patience=4, early_stopping_threshold=0.0))
+    
     # Training
     if training_args.do_train:
         model_path = (
@@ -261,10 +304,11 @@ def main():
         #    model_path += f'_layers={model_args.layers_to_finetune}'
 
         trainer.train(model_path=model_path)
-        trainer.save_model()
+        if not model_args.early_stopping:
+            trainer.save_model()
         # For convenience, we also re-save the tokenizer to the same directory,
         # so that you can share your model easily on huggingface.co/models =)
-        if trainer.is_world_master():
+        if trainer.is_world_process_zero():
             tokenizer.save_pretrained(training_args.output_dir)
 
     # Evaluation
@@ -278,7 +322,7 @@ def main():
         result = {"perplexity": perplexity}
 
         output_eval_file = os.path.join(training_args.output_dir, "eval_results_lm.txt")
-        if trainer.is_world_master():
+        if trainer.is_world_process_zero():
             with open(output_eval_file, "w") as writer:
                 logger.info("***** Eval results *****")
                 for key in sorted(result.keys()):

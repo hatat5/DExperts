@@ -7,11 +7,11 @@ import torch
 from tqdm import tqdm
 import json
 import os
-from transformers import pipeline
-from generation.generation import gpt2, gpt3, ctrl, pplm, dexperts
+from transformers import pipeline, AutoModel, AutoTokenizer
+from generation.generation import gpt2, gpt3, ctrl, pplm, dexperts, dexperts_steer
 from utils.utils import load_jsonl, batchify, ensure_dir
 
-ALLOWED_MODELS = ['gpt3', 'gpt2', 'dexperts', 'pplm', 'ctrl']
+ALLOWED_MODELS = ['gpt3', 'gpt2', 'dexperts', 'pplm', 'ctrl', 'dexperts-steer']
 
 
 def make_generations_col(generations, responses):
@@ -47,9 +47,10 @@ def collate(dataset: pd.DataFrame, generations: List[str], responses: Iterable[D
 @click.option('--alpha', default=0.0, help='Hyperparameter for ensemble methods')
 @click.option('--p', default=1.0, type=float, help='Hyperparameter for nucleus (top-p) sampling')
 @click.option('--filter_p', default=0.9, type=float, help='Hyperparameter for truncation of p_base')
+@click.option('--steering-layer', default=None, type=int, help='steering layer number')
 def main(output_dir: str, dataset_file: Optional[str], use_eos: bool, model: str, model_type: str, 
          pos_model: str, neg_model: str, positive: bool, n: int, max_tokens: int, batch_size: int, resume: bool,
-         alpha: float, p: float, filter_p: float):
+         alpha: float, p: float, filter_p: float, steering_layer: Optional[int]):
     # Load prompts
     if dataset_file:
         assert not use_eos
@@ -120,6 +121,21 @@ def main(output_dir: str, dataset_file: Optional[str], use_eos: bool, model: str
             p=p,
             alpha=alpha,
         )
+    elif model_type == 'dexperts-steer':
+        generations_iter = dexperts_steer(
+            prompts=prompts,
+            max_len=max_tokens,
+            num_samples=n,
+            batch_size=batch_size,
+            steering_layer=steering_layer,
+            model_name_or_path=model,
+            expert_name_or_path=pos_model,
+            antiexpert_name_or_path=neg_model,
+            out_file=generations_file,
+            filter_p=filter_p,
+            p=p,
+            alpha=alpha,
+        )
     elif model_type == 'ctrl':
         assert model == 'ctrl'
         ctrl_code = "Reviews Rating 5.0" if positive else "Reviews Rating 1.0"
@@ -160,6 +176,9 @@ def main(output_dir: str, dataset_file: Optional[str], use_eos: bool, model: str
     n = len(generations) // len(prompts)
 
     # score generations and write to sentiment.jsonl
+    #classifier_model = AutoModel.from_pretrained('distilbert-base-uncased-finetuned-sst-2-english')
+    #classifier_tokenizer = AutoTokenizer.from_pretrained('distilbert-base-uncased-finetuned-sst-2-english')
+    #classifier = pipeline('sentiment-analysis', model=classifier_model, tokenizer=classifier_tokenizer)
     classifier = pipeline('sentiment-analysis')
     with open(sentiment_file, 'w') as fo:
         for i, p in tqdm(enumerate(prompts), total=len(prompts), desc='Scoring generations'):
@@ -167,8 +186,8 @@ def main(output_dir: str, dataset_file: Optional[str], use_eos: bool, model: str
             for j in range(n):
                 gen = generations[i*n + j]
                 sentences_for_prompt.append(f'{p}{gen}')
-            try:
-                predictions_for_prompt = classifier(sentences_for_prompt)
+            try: # Added truncation = true to make sure the classifier can process the input
+                predictions_for_prompt = classifier(sentences_for_prompt, truncation=True)
             except IndexError: # sometimes the generation is too long?
                 predictions_for_prompt = [{'label': "", 'score': float('nan')}] * len(sentences_for_prompt)
             for res in predictions_for_prompt:
