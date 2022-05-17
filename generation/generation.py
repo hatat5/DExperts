@@ -215,7 +215,9 @@ def dexperts_steer(
         num_samples: int,
         batch_size: int,
         steering_layer: int,
-        alpha: float,
+        alpha_base: float,
+        alpha_expert: float,
+        alpha_antiexpert: float,
         model_name_or_path: str,
         expert_name_or_path: str,
         antiexpert_name_or_path: str,
@@ -228,7 +230,9 @@ def dexperts_steer(
         expert_model=expert_name_or_path,
         antiexpert_model=antiexpert_name_or_path,
         steering_layer=steering_layer,
-        alpha=alpha,
+        alpha_base=alpha_base,
+        alpha_expert=alpha_expert,
+        alpha_antiexpert=alpha_antiexpert,
     )
 
     yield from _gpt2_helper(

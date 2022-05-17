@@ -23,7 +23,9 @@ class DExpertsGeneration(GPT2Generation):
         tokenizer: str = 'gpt2', 
         seed: int = 42,
         steering_layer: Optional[int] = None,
-        alpha: Optional[float] = 0,
+        alpha_base: Optional[float] = 0,
+        alpha_expert: Optional[float] = 0,
+        alpha_antiexpert: Optional[float] = 0,
     ):
         # Set up device
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -58,13 +60,21 @@ class DExpertsGeneration(GPT2Generation):
             else:
                 self.anti_expert_block = None
 
+            if alpha_expert is None:
+                alpha_expert = alpha_base
+            
+            if alpha_antiexpert is None:
+                alpha_antiexpert = alpha_base
+
             self.steer_model = self.base_model
             self.steer_model.transformer.set_steering_layer(
                     layer_num=steering_layer,
                     base_block=self.base_block,
                     expert_block=self.expert_block,
                     anti_expert_block=self.anti_expert_block,
-                    alpha=alpha,
+                    alpha_base=alpha_base,
+                    alpha_expert=alpha_expert,
+                    alpha_antiexpert=alpha_antiexpert,
             )
 
     def __repr__(self):
@@ -78,7 +88,9 @@ class DExpertsGeneration(GPT2Generation):
                  k: int = 0,
                  p: float = 1.0,
                  temperature: float = 1.0,
-                 alpha: float = 0.0,
+                 alpha_base: float = 0,
+                 alpha_expert: Optional[float] = None,
+                 alpha_antiexpert: Optional[float] = None,
                  layers_to_modify: Optional[List[int]] = None,
                  **model_kwargs):
         if isinstance(prompt, str):
@@ -94,7 +106,17 @@ class DExpertsGeneration(GPT2Generation):
         unfinished_sents = torch.ones(batch_size, dtype=torch.long, device=self.device)
 
         # Set alpha for steering
-        alpha = torch.tensor(alpha).to(self.device)
+        alpha_base = torch.tensor(alpha_base).to(self.device)
+        if alpha_expert is not None:
+            alpha_expert = torch.tensor(alpha_expert).to(self.device)
+        else:
+            alpha_expert = alpha_base
+        
+        if alpha_antiexpert is not None:
+            alpha_antiexpert = torch.tensor(alpha_antiexpert).to(self.device)
+        else:
+            alpha_antiexpert = alpha_base
+
         self.base_model.eval()
         if self.expert:
             self.expert.eval()
@@ -164,8 +186,9 @@ class DExpertsGeneration(GPT2Generation):
                         base_logits = top_k_top_p_filtering(base_logits, top_p=filter_p)
                     
                     # DExperts
-                    ensemble_logits = base_logits + alpha * (expert_logits - antiexpert_logits)
-                    #torch.nan_to_num(ensemble_logits, -float('inf')) # necessary when doing expert only modeling
+                    #ensemble_logits = base_logits + alpha * (expert_logits - antiexpert_logits)
+                    #ensemble_logits = base_logits + alpha * expert_logits - beta * antiexpert_logits
+                    ensemble_logits = alpha_base * base_logits + alpha_expert * expert_logits + alpha_antiexpert * antiexpert_logits
 
                 # in the first decoding step, we want to use the 'real' last position for each sentence
                 if step == 0:

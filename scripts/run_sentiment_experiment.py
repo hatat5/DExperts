@@ -7,7 +7,7 @@ import torch
 from tqdm import tqdm
 import json
 import os
-from transformers import pipeline, AutoModel, AutoTokenizer
+from transformers import pipeline, AutoModel, AutoTokenizer, set_seed
 from generation.generation import gpt2, gpt3, ctrl, pplm, dexperts, dexperts_steer
 from utils.utils import load_jsonl, batchify, ensure_dir
 
@@ -43,14 +43,21 @@ def collate(dataset: pd.DataFrame, generations: List[str], responses: Iterable[D
 @click.option('--n', default=25, help='Number of samples to generate for each prompt. When used with --eos')
 @click.option('--max-tokens', default=20, help='Number of tokens (usually BPE) to generate for each prompt.')
 @click.option('--batch-size', default=32)
+@click.option('--seed', default=23)
 @click.option('--resume/--no-resume', default=False)
-@click.option('--alpha', default=0.0, help='Hyperparameter for ensemble methods')
+@click.option('--alpha_base', default=0.0, help='Hyperparameter for ensemble methods')
+@click.option('--alpha_expert', default=None, type=float, help='Hyperparameter for ensemble methods')
+@click.option('--alpha_antiexpert', default=None, type=float, help='Hyperparameter for ensemble methods')
 @click.option('--p', default=1.0, type=float, help='Hyperparameter for nucleus (top-p) sampling')
 @click.option('--filter_p', default=0.9, type=float, help='Hyperparameter for truncation of p_base')
 @click.option('--steering-layer', default=None, type=int, help='steering layer number')
 def main(output_dir: str, dataset_file: Optional[str], use_eos: bool, model: str, model_type: str, 
-         pos_model: str, neg_model: str, positive: bool, n: int, max_tokens: int, batch_size: int, resume: bool,
-         alpha: float, p: float, filter_p: float, steering_layer: Optional[int]):
+         pos_model: str, neg_model: str, positive: bool, n: int, max_tokens: int, batch_size: int, 
+         seed: int, resume: bool, alpha_base: float, alpha_expert: Optional[float],
+         alpha_antiexpert: Optional[float], p: float, filter_p: float, steering_layer: Optional[int]):
+
+    # Set seed
+    set_seed(seed)
     # Load prompts
     if dataset_file:
         assert not use_eos
@@ -119,7 +126,9 @@ def main(output_dir: str, dataset_file: Optional[str], use_eos: bool, model: str
             out_file=generations_file,
             filter_p=filter_p,
             p=p,
-            alpha=alpha,
+            alpha_base=alpha_base,
+            alpha_expert=alpha_expert,
+            alpha_antiexpert=alpha_antiexpert,
         )
     elif model_type == 'dexperts-steer':
         generations_iter = dexperts_steer(
@@ -134,7 +143,9 @@ def main(output_dir: str, dataset_file: Optional[str], use_eos: bool, model: str
             out_file=generations_file,
             filter_p=filter_p,
             p=p,
-            alpha=alpha,
+            alpha_base=alpha_base,
+            alpha_expert=alpha_expert,
+            alpha_antiexpert=alpha_antiexpert,
         )
     elif model_type == 'ctrl':
         assert model == 'ctrl'
