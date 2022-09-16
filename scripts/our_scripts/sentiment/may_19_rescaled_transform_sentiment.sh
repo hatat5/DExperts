@@ -1,28 +1,28 @@
-RESIDUAL_METHOD=expert_residual_method
+RESIDUAL_METHOD=rescale_to_expert
 EXPERT_SIZE=large
 MODEL_DIR=models/experts/sentiment/$EXPERT_SIZE
 PROMPT_TYPE=positive_prompts
 PROMPTS_DATASET=prompts/sentiment_prompts-10k/$PROMPT_TYPE.jsonl
 TARGET_SENTIMENT=negative
-STEERING_LAYERS=( 22 )
+STEERING_LAYERS=( 17 27 )
 TRAIN_EPOCHS=( 100 )
 OUTPUT_DIR=generations/sentiment/$PROMPT_TYPE/${EXPERT_SIZE}_experts/$TARGET_SENTIMENT/
 
 declare -a ALPHAS=(
+    "1.0 5 -2.0"
     "1.0 10 -5"
     #"1.0 20 -10"
-    #"1.0 40 -25"
+    "1.0 40 -25"
+    #"0.1 10 -5"
     "0 2.0 -1.0"
-    #"1.0 0 0"
-    "0 1.0 0"
-    "0 0 -1.0"
+    #"0 1.0 0"
+    #"0 0 -1.0"
     #"0 1.0 -1.0"
     #"1.0 0 -1.0"
     #"-1.0 1.0 0"
     #"1.0 1.0 0"
-    "1.0 1.0 -1.0"
+    #"1.0 1.0 -1.0"
     #"-1.0 2.0 -1.0"
-    #"0 2.0 0"
 )
 
 for TRAIN_EPOCH in "${TRAIN_EPOCHS[@]}"
